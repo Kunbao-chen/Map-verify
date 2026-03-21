@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>地圖座標編輯器 - 完整數據匯出版</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f7f6; margin: 20px; color: #333; }
+        .container { display: flex; gap: 20px; align-items: flex-start; }
+        .sidebar { width: 350px; flex-shrink: 0; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 20px; }
+        .card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-top: 4px solid #007bff; }
+        
+        h3 { margin-top: 0; margin-bottom: 12px; font-size: 17px; color: #0056b3; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        label { font-size: 13px; font-weight: bold; display: block; margin-bottom: 5px; }
+        input[type="text"], input[type="file"] { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; }
+        
+        .point-group { background: #f9f9f9; border: 2px dashed #ccc; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+        .point-group.confirmed { border-style: solid; border-color: #28a745; background: #f0fff4; }
+        
+        .btn { padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; display: block; width: 100%; margin-bottom: 8px; }
+        .btn-confirm { background: #28a745; color: white; }
+        .btn-action { background: #6f42c1; color: white; font-size: 16px; padding: 12px; }
+        .btn-clear { background: #6c757d; color: white; }
+        .btn-save { background: #17a2b8; color: white; }
+        .btn-export { background: #e83e8c; color: white; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; opacity: 0.6; }
+
+        .map-wrapper { flex-grow: 1; background: #ddd; border-radius: 10px; overflow: auto; position: relative; border: 2px solid #bbb; max-height: 85vh; }
+        .map-container { position: relative; display: inline-block; cursor: crosshair; }
+        #map-img { display: block; user-select: none; -webkit-user-drag: none; }
+        #markers-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+        .dot { position: absolute; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: auto; cursor: grab; z-index: 50; }
+        .dot:active { cursor: grabbing; }
+        .dot.special { width: 22px; height: 22px; z-index: 100; box-shadow: 0 0 12px rgba(0,0,0,0.5); }
+        .ref-dot { position: absolute; width: 16px; height: 16px; background: #28a745; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); z-index: 10; pointer-events: none;}
+
+        .table-section { margin-top: 20px; background: white; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { background: #f8f9fa; text-align: left; padding: 10px; border-bottom: 2px solid #dee2e6; }
+        td { padding: 8px 10px; border-bottom: 1px solid #eee; transition: background-color 0.2s; }
+        .coord-cell { font-family: monospace; color: #0056b3; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="sidebar">
+        <div class="card">
+            <h3>1. 檔案管理</h3>
+            <label>🖼️ 地圖圖片</label>
+            <input type="file" id="img-upload" accept="image/*">
+            <input type="file" id="csv-upload" accept=".csv" style="display:none;">
+        </div>
+
+        <div class="card">
+            <h3>2. 基準點校準</h3>
+            <div id="group-1" class="point-group">
+                <label>📍 定位點 A</label>
+                <input type="text" id="p1-raw" placeholder="緯度, 經度">
+                <button class="btn btn-confirm" onclick="confirmPoint(1)">鎖定 A</button>
+            </div>
+            <div id="group-2" class="point-group">
+                <label>📍 定位點 B</label>
+                <input type="text" id="p2-raw" placeholder="緯度, 經度">
+                <button class="btn btn-confirm" id="btn-conf-2" onclick="confirmPoint(2)" disabled>鎖定 B</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>3. 操作與輸出</h3>
+            <button class="btn btn-action" id="btn-plot" onclick="triggerAndPlot()" disabled>🔄 讀取 CSV 並自動標註</button>
+            <button class="btn btn-clear" onclick="resetSpecialDots()">🎨 清除所有特色標色</button>
+            <button class="btn btn-save" id="btn-save-img" onclick="saveMapAsImage()" disabled>🖼️ 保存圖片 (JPG)</button>
+            <button class="btn btn-export" id="btn-export" onclick="exportCSV()" disabled>💾 輸出完整數據 CSV</button>
+        </div>
+    </div>
+
+    <div style="flex-grow: 1;">
+        <div class="map-wrapper">
+            <div class="map-container" id="map-container" onclick="handleMapClick(event)">
+                <img id="map-img" src="" style="display:none;">
+                <div id="markers-layer"></div>
+            </div>
+        </div>
+        
+        <div class="table-section" id="table-section" style="display:none;">
+            <h3>📍 地點數據表</h3>
+            <table id="data-table">
+                <thead>
+                    <tr><th>標色</th><th>地名</th><th>座標文字</th><th>百分比 (X, Y)</th></tr>
+                </thead>
+                <tbody id="table-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<canvas id="save-canvas" style="display:none;"></canvas>
+
+<script>
+    let state = {
+        imgLoaded: false, csvData: [],
+        p1: { x: null, y: null, lat: null, lng: null, confirmed: false },
+        p2: { x: null, y: null, lat: null, lng: null, confirmed: false },
+        isDragging: false, dragTarget: null
+    };
+
+    const COLORS = ["#ff33cc", "#00dbde", "#ff9500", "#7ed321", "#bd10e0", "#50e3c2", "#f5a623", "#4a90e2"];
+
+    window.onload = () => {
+        document.getElementById('p1-raw').value = localStorage.getItem('coord_p1') || '';
+        document.getElementById('p2-raw').value = localStorage.getItem('coord_p2') || '';
+    };
+
+    document.getElementById('p1-raw').oninput = (e) => localStorage.setItem('coord_p1', e.target.value);
+    document.getElementById('p2-raw').oninput = (e) => localStorage.setItem('coord_p2', e.target.value);
+
+    function triggerAndPlot() {
+        document.getElementById('csv-upload').click();
+    }
+
+    document.getElementById('csv-upload').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const lines = ev.target.result.split(/\r?\n/);
+            state.csvData = lines.slice(1).filter(l => l.trim()).map(line => {
+                let row = [], inQuotes = false, curr = "";
+                for (let c of line) {
+                    if (c === '"') inQuotes = !inQuotes;
+                    else if (c === ',' && !inQuotes) { row.push(curr); curr = ""; }
+                    else curr += c;
+                }
+                row.push(curr);
+                return { name: row[1], lat: parseFloat(row[2]), lng: parseFloat(row[3]), x: 0, y: 0, color: null };
+            });
+            calculateAndPlot();
+            e.target.value = '';
+        };
+        reader.readAsText(file);
+    };
+
+    function calculateAndPlot() {
+        if (!state.p1.confirmed || !state.p2.confirmed) return alert("請先鎖定 A、B 基準點！");
+        const dLat = state.p2.lat - state.p1.lat, dLng = state.p2.lng - state.p1.lng;
+        const dX = state.p2.x - state.p1.x, dY = state.p2.y - state.p1.y;
+        state.csvData.forEach(item => {
+            item.x = state.p1.x + ((item.lng - state.p1.lng) / dLng) * dX;
+            item.y = state.p1.y + ((item.lat - state.p1.lat) / dLat) * dY;
+        });
+        document.getElementById('table-section').style.display = 'block';
+        renderTable(); drawMarkers();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = '';
+        state.csvData.forEach((item, i) => {
+            const tr = document.createElement('tr');
+            if (item.color) tr.style.backgroundColor = item.color + "25";
+            tr.onclick = () => { item.color = item.color ? null : COLORS[i % COLORS.length]; renderTable(); drawMarkers(); };
+            tr.innerHTML = `<td><div style="width:12px;height:12px;border-radius:50%;background:${item.color || '#ff0000'};"></div></td>
+                <td>${item.name}</td><td class="coord-cell">${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}</td>
+                <td>${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%</td>`;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function drawMarkers() {
+        const layer = document.getElementById('markers-layer');
+        layer.innerHTML = '';
+        [state.p1, state.p2].forEach(p => {
+            if (p.x !== null) {
+                const d = document.createElement('div'); d.className = 'ref-dot';
+                d.style.left = p.x + '%'; d.style.top = p.y + '%'; layer.appendChild(d);
+            }
+        });
+        state.csvData.forEach((item, i) => {
+            if (item.x === 0) return;
+            const d = document.createElement('div');
+            d.className = `dot ${item.color ? 'special' : ''}`;
+            d.style.left = item.x + '%'; d.style.top = item.y + '%';
+            d.style.backgroundColor = item.color || '#ff0000';
+            d.onpointerdown = (e) => { 
+                e.preventDefault(); e.stopPropagation(); 
+                if (!item.color) { item.color = COLORS[i % COLORS.length]; d.className = 'dot special'; d.style.backgroundColor = item.color; renderTable(); }
+                startDrag(e, i, d);
+            };
+            layer.appendChild(d);
+        });
+    }
+
+    function startDrag(e, index, dotElement) {
+        state.isDragging = true; state.dragTarget = index;
+        const rect = document.getElementById('map-img').getBoundingClientRect();
+        const rowToUpdate = document.getElementById('table-body').children[index];
+        const onPointerMove = (ev) => {
+            if (!state.isDragging) return;
+            const item = state.csvData[state.dragTarget];
+            item.x = ((ev.clientX - rect.left) / rect.width) * 100;
+            item.y = ((ev.clientY - rect.top) / rect.height) * 100;
+            const dLat = state.p2.lat - state.p1.lat, dLng = state.p2.lng - state.p1.lng;
+            const dX = state.p2.x - state.p1.x, dY = state.p2.y - state.p1.y;
+            item.lng = state.p1.lng + ((item.x - state.p1.x) / dX) * dLng;
+            item.lat = state.p1.lat + ((item.y - state.p1.y) / dLat) * dLat; // 修正這裡的係數
+            dotElement.style.left = item.x + '%'; dotElement.style.top = item.y + '%';
+            if (rowToUpdate) { rowToUpdate.children[2].innerText = `${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}`; rowToUpdate.children[3].innerText = `${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%`; }
+        };
+        const onPointerUp = () => { state.isDragging = false; window.removeEventListener('pointermove', onPointerMove); window.removeEventListener('pointerup', onPointerUp); };
+        window.addEventListener('pointermove', onPointerMove); window.addEventListener('pointerup', onPointerUp);
+    }
+
+    document.getElementById('img-upload').onchange = (e) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => { document.getElementById('map-img').src = ev.target.result; document.getElementById('map-img').style.display = 'block'; state.imgLoaded = true; resetState(); };
+        reader.readAsDataURL(e.target.files[0]);
+    };
+
+    function handleMapClick(e) {
+        if (!state.imgLoaded || state.isDragging) return;
+        const rect = document.getElementById('map-img').getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        if (!state.p1.confirmed) { state.p1.x = x; state.p1.y = y; }
+        else if (!state.p2.confirmed) { state.p2.x = x; state.p2.y = y; }
+        drawMarkers();
+    }
+
+    function confirmPoint(num) {
+        const val = document.getElementById(`p${num}-raw`).value;
+        const coords = val.split(/[ ,;]+/).filter(p => p !== "");
+        const p = num === 1 ? state.p1 : state.p2;
+        if (p.x === null || coords.length < 2) return alert("請先點擊地圖並輸入座標");
+        p.lat = parseFloat(coords[0]); p.lng = parseFloat(coords[1]); p.confirmed = true;
+        document.getElementById(`group-${num}`).className = 'point-group confirmed';
+        if (num === 1) document.getElementById('btn-conf-2').disabled = false;
+        drawMarkers(); checkReady();
+    }
+
+    function checkReady() { const ready = state.p1.confirmed && state.p2.confirmed; ['btn-plot', 'btn-export', 'btn-save-img'].forEach(id => document.getElementById(id).disabled = !ready); }
+    function resetSpecialDots() { state.csvData.forEach(item => item.color = null); renderTable(); drawMarkers(); }
+    
+    // --- 重要修正：確保百分比座標正確輸出 ---
+    function exportCSV() {
+        let content = "\uFEFF序號,地名,緯度,經度,座標文字,百分比X,百分比Y\n";
+        state.csvData.forEach((it, i) => { 
+            // 確保存儲的是當前的 lat, lng 以及計算後的 x, y
+            const coordText = `"${it.lat.toFixed(7)}, ${it.lng.toFixed(7)}"`;
+            content += `${i+1},${it.name},${it.lat},${it.lng},${coordText},${it.x.toFixed(4)},${it.y.toFixed(4)}\n`; 
+        });
+        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a"); 
+        link.href = URL.createObjectURL(blob); 
+        link.download = "map_export_full_data.csv"; 
+        link.click();
+    }
+
+    function saveMapAsImage() {
+        const img = document.getElementById('map-img');
+        const canvas = document.getElementById('save-canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        ctx.drawImage(img, 0, 0);
+        state.csvData.forEach(it => {
+            if (it.x === 0) return;
+            const px = (it.x / 100) * canvas.width, py = (it.y / 100) * canvas.height;
+            ctx.fillStyle = it.color || "#ff0000"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(px, py, it.color ? 15 : 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            if (it.color) { ctx.fillStyle = "black"; ctx.font = "bold 24px Arial"; ctx.fillText(it.name, px + 20, py + 10); }
+        });
+        const link = document.createElement('a'); link.download = 'marked_map.jpg'; link.href = canvas.toDataURL('image/jpeg', 0.9); link.click();
+    }
+
+    function resetState() {
+        state.p1 = { x: null, y: null, lat: null, lng: null, confirmed: false };
+        state.p2 = { x: null, y: null, lat: null, lng: null, confirmed: false };
+        state.csvData = [];
+        document.querySelectorAll('.point-group').forEach(g => g.className = 'point-group');
+        document.getElementById('markers-layer').innerHTML = '';
+        document.getElementById('table-section').style.display = 'none';
+        checkReady();
+    }
+</script>
+</body>
+</html>
