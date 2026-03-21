@@ -2,12 +2,13 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>地圖座標編輯器 - 完整數據匯出版</title>
+    <title>地圖座標編輯器 - 進階編輯版</title>
     <style>
         body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f7f6; margin: 20px; color: #333; }
         .container { display: flex; gap: 20px; align-items: flex-start; }
         .sidebar { width: 350px; flex-shrink: 0; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 20px; }
         .card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-top: 4px solid #007bff; }
+        .card.action-card { border-top-color: #6f42c1; margin-top: 10px; margin-bottom: 10px; padding: 20px 15px; }
         
         h3 { margin-top: 0; margin-bottom: 12px; font-size: 17px; color: #0056b3; border-bottom: 1px solid #eee; padding-bottom: 5px; }
         label { font-size: 13px; font-weight: bold; display: block; margin-bottom: 5px; }
@@ -19,9 +20,11 @@
         .btn { padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; display: block; width: 100%; margin-bottom: 8px; }
         .btn-confirm { background: #28a745; color: white; }
         .btn-action { background: #6f42c1; color: white; font-size: 16px; padding: 12px; }
+        .btn-add { background: #20c997; color: white; }
         .btn-clear { background: #6c757d; color: white; }
         .btn-save { background: #17a2b8; color: white; }
         .btn-export { background: #e83e8c; color: white; }
+        .btn-delete { background: #dc3545; color: white; padding: 4px 8px; font-size: 11px; width: auto; margin: 0; }
         .btn:disabled { background: #ccc; cursor: not-allowed; opacity: 0.6; }
 
         .map-wrapper { flex-grow: 1; background: #ddd; border-radius: 10px; overflow: auto; position: relative; border: 2px solid #bbb; max-height: 85vh; }
@@ -46,7 +49,7 @@
 <div class="container">
     <div class="sidebar">
         <div class="card">
-            <h3>1. 檔案管理</h3>
+            <h3>1. 檔案與圖片</h3>
             <label>🖼️ 地圖圖片</label>
             <input type="file" id="img-upload" accept="image/*">
             <input type="file" id="csv-upload" accept=".csv" style="display:none;">
@@ -66,9 +69,14 @@
             </div>
         </div>
 
-        <div class="card">
-            <h3>3. 操作與輸出</h3>
+        <div class="card action-card">
+            <h3>3. 資料讀取</h3>
             <button class="btn btn-action" id="btn-plot" onclick="triggerAndPlot()" disabled>🔄 讀取 CSV 並自動標註</button>
+        </div>
+
+        <div class="card">
+            <h3>4. 編輯與輸出</h3>
+            <button class="btn btn-add" id="btn-add-point" onclick="addNewPoint()" disabled>➕ 新增自定義地點</button>
             <button class="btn btn-clear" onclick="resetSpecialDots()">🎨 清除所有特色標色</button>
             <button class="btn btn-save" id="btn-save-img" onclick="saveMapAsImage()" disabled>🖼️ 保存圖片 (JPG)</button>
             <button class="btn btn-export" id="btn-export" onclick="exportCSV()" disabled>💾 輸出完整數據 CSV</button>
@@ -87,7 +95,7 @@
             <h3>📍 地點數據表</h3>
             <table id="data-table">
                 <thead>
-                    <tr><th>標色</th><th>地名</th><th>座標文字</th><th>百分比 (X, Y)</th></tr>
+                    <tr><th>標色</th><th>地名</th><th>座標文字</th><th>百分比 (X, Y)</th><th>操作</th></tr>
                 </thead>
                 <tbody id="table-body"></tbody>
             </table>
@@ -133,7 +141,7 @@
                     else curr += c;
                 }
                 row.push(curr);
-                return { name: row[1], lat: parseFloat(row[2]), lng: parseFloat(row[3]), x: 0, y: 0, color: null };
+                return { name: row[1] || "未命名", lat: parseFloat(row[2]) || 0, lng: parseFloat(row[3]) || 0, x: 0, y: 0, color: null };
             });
             calculateAndPlot();
             e.target.value = '';
@@ -146,11 +154,43 @@
         const dLat = state.p2.lat - state.p1.lat, dLng = state.p2.lng - state.p1.lng;
         const dX = state.p2.x - state.p1.x, dY = state.p2.y - state.p1.y;
         state.csvData.forEach(item => {
-            item.x = state.p1.x + ((item.lng - state.p1.lng) / dLng) * dX;
-            item.y = state.p1.y + ((item.lat - state.p1.lat) / dLat) * dY;
+            if(item.lat !== 0) {
+                item.x = state.p1.x + ((item.lng - state.p1.lng) / dLng) * dX;
+                item.y = state.p1.y + ((item.lat - state.p1.lat) / dLat) * dY;
+            }
         });
         document.getElementById('table-section').style.display = 'block';
         renderTable(); drawMarkers();
+    }
+
+    // --- 新增功能：手動增加地點 ---
+    function addNewPoint() {
+        const name = prompt("請輸入新地點名稱：", "新地點");
+        if (!name) return;
+
+        // 在圖片中心產生點
+        const newItem = {
+            name: name,
+            lat: state.p1.lat, // 預設先給基準點座標，拖曳後會更新
+            lng: state.p1.lng,
+            x: 50,
+            y: 50,
+            color: COLORS[state.csvData.length % COLORS.length]
+        };
+
+        state.csvData.push(newItem);
+        document.getElementById('table-section').style.display = 'block';
+        renderTable();
+        drawMarkers();
+    }
+
+    // --- 新增功能：刪除地點 ---
+    function deletePoint(index) {
+        if (confirm(`確定要刪除「${state.csvData[index].name}」嗎？`)) {
+            state.csvData.splice(index, 1);
+            renderTable();
+            drawMarkers();
+        }
     }
 
     function renderTable() {
@@ -159,10 +199,18 @@
         state.csvData.forEach((item, i) => {
             const tr = document.createElement('tr');
             if (item.color) tr.style.backgroundColor = item.color + "25";
-            tr.onclick = () => { item.color = item.color ? null : COLORS[i % COLORS.length]; renderTable(); drawMarkers(); };
-            tr.innerHTML = `<td><div style="width:12px;height:12px;border-radius:50%;background:${item.color || '#ff0000'};"></div></td>
-                <td>${item.name}</td><td class="coord-cell">${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}</td>
-                <td>${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%</td>`;
+            tr.onclick = (e) => {
+                if (e.target.tagName === 'BUTTON') return;
+                item.color = item.color ? null : COLORS[i % COLORS.length]; 
+                renderTable(); drawMarkers(); 
+            };
+            tr.innerHTML = `
+                <td><div style="width:12px;height:12px;border-radius:50%;background:${item.color || '#ff0000'};"></div></td>
+                <td>${item.name}</td>
+                <td class="coord-cell">${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}</td>
+                <td>${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%</td>
+                <td><button class="btn btn-delete" onclick="deletePoint(${i})">🗑️ 刪除</button></td>
+            `;
             tbody.appendChild(tr);
         });
     }
@@ -177,14 +225,18 @@
             }
         });
         state.csvData.forEach((item, i) => {
-            if (item.x === 0) return;
             const d = document.createElement('div');
             d.className = `dot ${item.color ? 'special' : ''}`;
             d.style.left = item.x + '%'; d.style.top = item.y + '%';
             d.style.backgroundColor = item.color || '#ff0000';
             d.onpointerdown = (e) => { 
                 e.preventDefault(); e.stopPropagation(); 
-                if (!item.color) { item.color = COLORS[i % COLORS.length]; d.className = 'dot special'; d.style.backgroundColor = item.color; renderTable(); }
+                if (!item.color) { 
+                    item.color = COLORS[i % COLORS.length]; 
+                    d.className = 'dot special'; 
+                    d.style.backgroundColor = item.color; 
+                    renderTable(); 
+                }
                 startDrag(e, i, d);
             };
             layer.appendChild(d);
@@ -203,9 +255,12 @@
             const dLat = state.p2.lat - state.p1.lat, dLng = state.p2.lng - state.p1.lng;
             const dX = state.p2.x - state.p1.x, dY = state.p2.y - state.p1.y;
             item.lng = state.p1.lng + ((item.x - state.p1.x) / dX) * dLng;
-            item.lat = state.p1.lat + ((item.y - state.p1.y) / dLat) * dLat; // 修正這裡的係數
+            item.lat = state.p1.lat + ((item.y - state.p1.y) / dY) * dLat;
             dotElement.style.left = item.x + '%'; dotElement.style.top = item.y + '%';
-            if (rowToUpdate) { rowToUpdate.children[2].innerText = `${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}`; rowToUpdate.children[3].innerText = `${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%`; }
+            if (rowToUpdate) { 
+                rowToUpdate.children[2].innerText = `${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}`; 
+                rowToUpdate.children[3].innerText = `${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%`; 
+            }
         };
         const onPointerUp = () => { state.isDragging = false; window.removeEventListener('pointermove', onPointerMove); window.removeEventListener('pointerup', onPointerUp); };
         window.addEventListener('pointermove', onPointerMove); window.addEventListener('pointerup', onPointerUp);
@@ -213,7 +268,12 @@
 
     document.getElementById('img-upload').onchange = (e) => {
         const reader = new FileReader();
-        reader.onload = (ev) => { document.getElementById('map-img').src = ev.target.result; document.getElementById('map-img').style.display = 'block'; state.imgLoaded = true; resetState(); };
+        reader.onload = (ev) => { 
+            document.getElementById('map-img').src = ev.target.result; 
+            document.getElementById('map-img').style.display = 'block'; 
+            state.imgLoaded = true; 
+            resetState(); 
+        };
         reader.readAsDataURL(e.target.files[0]);
     };
 
@@ -238,14 +298,16 @@
         drawMarkers(); checkReady();
     }
 
-    function checkReady() { const ready = state.p1.confirmed && state.p2.confirmed; ['btn-plot', 'btn-export', 'btn-save-img'].forEach(id => document.getElementById(id).disabled = !ready); }
+    function checkReady() { 
+        const ready = state.p1.confirmed && state.p2.confirmed; 
+        ['btn-plot', 'btn-export', 'btn-save-img', 'btn-add-point'].forEach(id => document.getElementById(id).disabled = !ready); 
+    }
+
     function resetSpecialDots() { state.csvData.forEach(item => item.color = null); renderTable(); drawMarkers(); }
     
-    // --- 重要修正：確保百分比座標正確輸出 ---
     function exportCSV() {
         let content = "\uFEFF序號,地名,緯度,經度,座標文字,百分比X,百分比Y\n";
         state.csvData.forEach((it, i) => { 
-            // 確保存儲的是當前的 lat, lng 以及計算後的 x, y
             const coordText = `"${it.lat.toFixed(7)}, ${it.lng.toFixed(7)}"`;
             content += `${i+1},${it.name},${it.lat},${it.lng},${coordText},${it.x.toFixed(4)},${it.y.toFixed(4)}\n`; 
         });
@@ -263,7 +325,6 @@
         canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
         ctx.drawImage(img, 0, 0);
         state.csvData.forEach(it => {
-            if (it.x === 0) return;
             const px = (it.x / 100) * canvas.width, py = (it.y / 100) * canvas.height;
             ctx.fillStyle = it.color || "#ff0000"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.arc(px, py, it.color ? 15 : 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
