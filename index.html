@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>地圖座標編輯器 - 進階編輯版</title>
+    <title>地圖座標編輯器 v1.3.0</title>
     <style>
         body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f7f6; margin: 20px; color: #333; }
         .container { display: flex; gap: 20px; align-items: flex-start; }
@@ -12,7 +12,7 @@
         
         h3 { margin-top: 0; margin-bottom: 12px; font-size: 17px; color: #0056b3; border-bottom: 1px solid #eee; padding-bottom: 5px; }
         label { font-size: 13px; font-weight: bold; display: block; margin-bottom: 5px; }
-        input[type="text"], input[type="file"] { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; }
+        input[type="text"], input[type="file"], input[type="number"] { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; }
         
         .point-group { background: #f9f9f9; border: 2px dashed #ccc; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
         .point-group.confirmed { border-style: solid; border-color: #28a745; background: #f0fff4; }
@@ -28,20 +28,30 @@
         .btn:disabled { background: #ccc; cursor: not-allowed; opacity: 0.6; }
 
         .map-wrapper { flex-grow: 1; background: #ddd; border-radius: 10px; overflow: auto; position: relative; border: 2px solid #bbb; max-height: 85vh; }
-        .map-container { position: relative; display: inline-block; cursor: crosshair; }
+        .map-container { position: relative; display: inline-block; cursor: crosshair; transition: transform 0.1s; transform-origin: top left; }
         #map-img { display: block; user-select: none; -webkit-user-drag: none; }
         #markers-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 
-        .dot { position: absolute; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: auto; cursor: grab; z-index: 50; }
+        /* 標示點補償樣式 */
+        .dot { 
+            position: absolute; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; 
+            transform: translate(-50%, -50%) scale(var(--dot-scale, 1)); 
+            transform-origin: center; pointer-events: auto; cursor: grab; z-index: 50; 
+        }
         .dot:active { cursor: grabbing; }
         .dot.special { width: 22px; height: 22px; z-index: 100; box-shadow: 0 0 12px rgba(0,0,0,0.5); }
-        .ref-dot { position: absolute; width: 16px; height: 16px; background: #28a745; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); z-index: 10; pointer-events: none;}
+        .ref-dot { 
+            position: absolute; width: 16px; height: 16px; background: #28a745; border: 2px solid white; border-radius: 50%; 
+            transform: translate(-50%, -50%) scale(var(--dot-scale, 1)); 
+            z-index: 10; pointer-events: none;
+        }
 
         .table-section { margin-top: 20px; background: white; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th { background: #f8f9fa; text-align: left; padding: 10px; border-bottom: 2px solid #dee2e6; }
         td { padding: 8px 10px; border-bottom: 1px solid #eee; transition: background-color 0.2s; }
         .coord-cell { font-family: monospace; color: #0056b3; font-weight: bold; }
+        .size-input { width: 60px !important; margin: 0 !important; padding: 4px !important; }
     </style>
 </head>
 <body>
@@ -75,7 +85,7 @@
         </div>
 
         <div class="card">
-            <h3>4. 編輯與輸出</h3>
+            <h3>4. 編輯與輸出 (v1.3.0)</h3>
             <button class="btn btn-add" id="btn-add-point" onclick="addNewPoint()" disabled>➕ 新增自定義地點</button>
             <button class="btn btn-clear" onclick="resetSpecialDots()">🎨 清除所有特色標色</button>
             <button class="btn btn-save" id="btn-save-img" onclick="saveMapAsImage()" disabled>🖼️ 保存圖片 (JPG)</button>
@@ -84,7 +94,7 @@
     </div>
 
     <div style="flex-grow: 1;">
-        <div class="map-wrapper">
+        <div class="map-wrapper" id="map-wrapper">
             <div class="map-container" id="map-container" onclick="handleMapClick(event)">
                 <img id="map-img" src="" style="display:none;">
                 <div id="markers-layer"></div>
@@ -95,7 +105,7 @@
             <h3>📍 地點數據表</h3>
             <table id="data-table">
                 <thead>
-                    <tr><th>標色</th><th>地名</th><th>座標文字</th><th>百分比 (X, Y)</th><th>操作</th></tr>
+                    <tr><th>標色</th><th>地名</th><th>座標文字</th><th>百分比 (X, Y)</th><th>Size</th><th>操作</th></tr>
                 </thead>
                 <tbody id="table-body"></tbody>
             </table>
@@ -107,7 +117,7 @@
 
 <script>
     let state = {
-        imgLoaded: false, csvData: [],
+        imgLoaded: false, csvData: [], currentZoom: 1,
         p1: { x: null, y: null, lat: null, lng: null, confirmed: false },
         p2: { x: null, y: null, lat: null, lng: null, confirmed: false },
         isDragging: false, dragTarget: null
@@ -118,14 +128,16 @@
     window.onload = () => {
         document.getElementById('p1-raw').value = localStorage.getItem('coord_p1') || '';
         document.getElementById('p2-raw').value = localStorage.getItem('coord_p2') || '';
+        updateMarkerScale();
     };
 
-    document.getElementById('p1-raw').oninput = (e) => localStorage.setItem('coord_p1', e.target.value);
-    document.getElementById('p2-raw').oninput = (e) => localStorage.setItem('coord_p2', e.target.value);
-
-    function triggerAndPlot() {
-        document.getElementById('csv-upload').click();
+    // 標示點補償邏輯：倍率 > 1 不變大，倍率 < 1 隨之變小
+    function updateMarkerScale() {
+        let dotScale = state.currentZoom > 1 ? (1 / state.currentZoom) : 1;
+        document.getElementById('markers-layer').style.setProperty('--dot-scale', dotScale);
     }
+
+    function triggerAndPlot() { document.getElementById('csv-upload').click(); }
 
     document.getElementById('csv-upload').onchange = (e) => {
         const file = e.target.files[0];
@@ -141,7 +153,12 @@
                     else curr += c;
                 }
                 row.push(curr);
-                return { name: row[1] || "未命名", lat: parseFloat(row[2]) || 0, lng: parseFloat(row[3]) || 0, x: 0, y: 0, color: null };
+                // 導入 Size 邏輯：搜尋不到或舊文件則預設 0
+                let rawSize = row[7] ? parseFloat(row[7]) : 0;
+                return { 
+                    name: row[1] || "未命名", lat: parseFloat(row[2]) || 0, lng: parseFloat(row[3]) || 0, 
+                    x: 0, y: 0, color: null, size: isNaN(rawSize) ? 0 : rawSize 
+                };
             });
             calculateAndPlot();
             e.target.value = '';
@@ -163,33 +180,21 @@
         renderTable(); drawMarkers();
     }
 
-    // --- 新增功能：手動增加地點 ---
     function addNewPoint() {
         const name = prompt("請輸入新地點名稱：", "新地點");
         if (!name) return;
-
-        // 在圖片中心產生點
-        const newItem = {
-            name: name,
-            lat: state.p1.lat, // 預設先給基準點座標，拖曳後會更新
-            lng: state.p1.lng,
-            x: 50,
-            y: 50,
-            color: COLORS[state.csvData.length % COLORS.length]
-        };
-
-        state.csvData.push(newItem);
+        state.csvData.push({
+            name: name, lat: state.p1.lat, lng: state.p1.lng,
+            x: 50, y: 50, color: COLORS[state.csvData.length % COLORS.length], size: 0
+        });
         document.getElementById('table-section').style.display = 'block';
-        renderTable();
-        drawMarkers();
+        renderTable(); drawMarkers();
     }
 
-    // --- 新增功能：刪除地點 ---
     function deletePoint(index) {
         if (confirm(`確定要刪除「${state.csvData[index].name}」嗎？`)) {
             state.csvData.splice(index, 1);
-            renderTable();
-            drawMarkers();
+            renderTable(); drawMarkers();
         }
     }
 
@@ -200,7 +205,7 @@
             const tr = document.createElement('tr');
             if (item.color) tr.style.backgroundColor = item.color + "25";
             tr.onclick = (e) => {
-                if (e.target.tagName === 'BUTTON') return;
+                if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
                 item.color = item.color ? null : COLORS[i % COLORS.length]; 
                 renderTable(); drawMarkers(); 
             };
@@ -209,6 +214,7 @@
                 <td>${item.name}</td>
                 <td class="coord-cell">${item.lat.toFixed(7)}, ${item.lng.toFixed(7)}</td>
                 <td>${item.x.toFixed(2)}%, ${item.y.toFixed(2)}%</td>
+                <td><input type="number" class="size-input" value="${item.size || 0}" onchange="state.csvData[${i}].size=parseFloat(this.value)||0"></td>
                 <td><button class="btn btn-delete" onclick="deletePoint(${i})">🗑️ 刪除</button></td>
             `;
             tbody.appendChild(tr);
@@ -231,16 +237,12 @@
             d.style.backgroundColor = item.color || '#ff0000';
             d.onpointerdown = (e) => { 
                 e.preventDefault(); e.stopPropagation(); 
-                if (!item.color) { 
-                    item.color = COLORS[i % COLORS.length]; 
-                    d.className = 'dot special'; 
-                    d.style.backgroundColor = item.color; 
-                    renderTable(); 
-                }
+                if (!item.color) { item.color = COLORS[i % COLORS.length]; d.className = 'dot special'; d.style.backgroundColor = item.color; renderTable(); }
                 startDrag(e, i, d);
             };
             layer.appendChild(d);
         });
+        updateMarkerScale();
     }
 
     function startDrag(e, index, dotElement) {
@@ -271,8 +273,7 @@
         reader.onload = (ev) => { 
             document.getElementById('map-img').src = ev.target.result; 
             document.getElementById('map-img').style.display = 'block'; 
-            state.imgLoaded = true; 
-            resetState(); 
+            state.imgLoaded = true; resetState(); 
         };
         reader.readAsDataURL(e.target.files[0]);
     };
@@ -295,7 +296,7 @@
         p.lat = parseFloat(coords[0]); p.lng = parseFloat(coords[1]); p.confirmed = true;
         document.getElementById(`group-${num}`).className = 'point-group confirmed';
         if (num === 1) document.getElementById('btn-conf-2').disabled = false;
-        drawMarkers(); checkReady();
+        localStorage.setItem(`coord_p${num}`, val); drawMarkers(); checkReady();
     }
 
     function checkReady() { 
@@ -306,16 +307,14 @@
     function resetSpecialDots() { state.csvData.forEach(item => item.color = null); renderTable(); drawMarkers(); }
     
     function exportCSV() {
-        let content = "\uFEFF序號,地名,緯度,經度,座標文字,百分比X,百分比Y\n";
+        let content = "\uFEFF序號,地名,緯度,經度,座標文字,百分比X,百分比Y,Size\n";
         state.csvData.forEach((it, i) => { 
             const coordText = `"${it.lat.toFixed(7)}, ${it.lng.toFixed(7)}"`;
-            content += `${i+1},${it.name},${it.lat},${it.lng},${coordText},${it.x.toFixed(4)},${it.y.toFixed(4)}\n`; 
+            content += `${i+1},${it.name},${it.lat},${it.lng},${coordText},${it.x.toFixed(4)},${it.y.toFixed(4)},${it.size || 0}\n`; 
         });
         const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a"); 
-        link.href = URL.createObjectURL(blob); 
-        link.download = "map_export_full_data.csv"; 
-        link.click();
+        const link = document.createElement("a"); link.href = URL.createObjectURL(blob); 
+        link.download = "map_export_v1.3.0.csv"; link.click();
     }
 
     function saveMapAsImage() {
